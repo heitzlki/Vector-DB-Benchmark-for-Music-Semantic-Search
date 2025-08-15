@@ -54,17 +54,23 @@ def main():
     ap.add_argument("--queries", default="queries.yaml", help="YAML file with queries")
     ap.add_argument("--topk", type=int, default=10)
     ap.add_argument("--repetitions", type=int, default=3)
-    ap.add_argument("--warmup", type=int, default=1, help="Warm-up passes per DB (not timed)")
+    ap.add_argument(
+        "--warmup", type=int, default=1, help="Warm-up passes per DB (not timed)"
+    )
     ap.add_argument("--query_model", default="sentence-transformers/all-MiniLM-L6-v2")
     args = ap.parse_args()
-
 
     vectors, payloads = load_embeddings(args.embeddings)
     dim = vectors.shape[1]
     # Check normalization: all vectors should have norm ~1
     norms = np.linalg.norm(vectors, axis=1)
     if not np.allclose(norms, 1.0, atol=1e-3):
-        print("Warning: Not all vectors are normalized! Min norm:", norms.min(), "Max norm:", norms.max())
+        print(
+            "Warning: Not all vectors are normalized! Min norm:",
+            norms.min(),
+            "Max norm:",
+            norms.max(),
+        )
     else:
         print("All vectors are normalized (L2 norm ~1)")
 
@@ -74,6 +80,7 @@ def main():
 
     # Preload the query embedding model once to avoid repeated loads
     from sentence_transformers import SentenceTransformer
+
     query_model = SentenceTransformer(args.query_model)
 
     # Exact baseline recall helper (cosine on normalized vectors)
@@ -94,7 +101,7 @@ def main():
         "metric": "COSINE",
         "model": args.query_model,
         "dataset_size": len(vectors),
-        "repetitions": args.repetitions
+        "repetitions": args.repetitions,
     }
     for db_name in args.dbs:
         print(f"Setting up {db_name}")
@@ -116,6 +123,7 @@ def main():
         hits = []
         recalls = []
         import random
+
         for rep in range(args.repetitions):
             # randomize query order each rep to avoid order effects
             order = list(range(len(queries)))
@@ -132,7 +140,9 @@ def main():
                 hits.append(hitk)
 
                 # Compute exact recall@k using baseline
-                true_idx = exact_topk_indices(np.array(q_vec, dtype=np.float32), vectors, args.topk)
+                true_idx = exact_topk_indices(
+                    np.array(q_vec, dtype=np.float32), vectors, args.topk
+                )
                 true_set = set(int(i) for i in true_idx.tolist())
                 # Map result ids to row indices
                 res_ids = []
@@ -175,9 +185,8 @@ def main():
         json.dump(results, f, indent=2)
     print("Saved metrics.json")
 
-    # Plot charts
-
-    # Exclude '_config' from plotting/metrics
+    # --- All plotting code (original and new) ---
+    # --- Original bar charts (restored) ---
     labels = [k for k in results.keys() if k != "_config"]
     ingest = [results[k]["ingest_time_sec"] for k in labels]
     latency = [results[k]["avg_query_latency_sec"] for k in labels]
@@ -228,8 +237,140 @@ def main():
     plt.title(f"Avg recall@{args.topk}")
     plt.tight_layout()
     plt.savefig(out_dir / "summary.png", bbox_inches="tight")
+    print("Saved original bar charts in results/")
 
-    print("Saved charts in results/")
+    # --- New metrics table and labeled bar charts ---
+    metrics = [
+        ("Ingest Time (sec)", ingest),
+        ("Avg Query Latency (sec)", latency),
+        (f"Avg Hits in Top {args.topk}", hitk),
+        (f"Avg Recall@{args.topk}", recallk),
+    ]
+
+    # Create a table visualization using matplotlib
+    cell_text = []
+    for metric_name, values in metrics:
+        row = [f"{v:.4f}" if isinstance(v, float) else str(v) for v in values]
+        cell_text.append(row)
+
+    fig, ax = plt.subplots(figsize=(max(6, len(labels) * 2), 2 + len(metrics)))
+    table = ax.table(
+        cellText=cell_text,
+        rowLabels=[m[0] for m in metrics],
+        colLabels=labels,
+        loc="center",
+        cellLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(12)
+    table.scale(1.2, 1.5)
+    ax.axis("off")
+    plt.title("Benchmark Metrics Table", fontsize=16, pad=20)
+    plt.tight_layout()
+    plt.savefig(out_dir / "metrics_table.png", bbox_inches="tight")
+    print("Saved metrics_table.png in results/")
+
+
+    # Grouped bar charts for each metric with value labels
+    for metric_name, values in metrics:
+        fig, ax = plt.subplots(figsize=(max(6, len(labels) * 1.5), 5))
+        bars = ax.bar(labels, values, color="skyblue")
+        ax.set_title(metric_name)
+        ax.set_ylabel(metric_name)
+        for bar, value in zip(bars, values):
+            ax.annotate(
+                f"{value:.4f}",
+                xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                xytext=(0, 5),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=11,
+                fontweight="bold",
+            )
+        plt.tight_layout()
+        fname = (
+            metric_name.lower()
+            .replace(" ", "_")
+            .replace("@", "at")
+            .replace("(", "")
+            .replace(")", "")
+            .replace("/", "_")
+            + ".png"
+        )
+        plt.savefig(out_dir / fname, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Saved {fname} in results/")
+
+    # --- Summary image with all four bar charts (2x2 grid) ---
+    fig, axs = plt.subplots(2, 2, figsize=(max(10, len(labels)*2.5), 10))
+    chart_data = [
+        ("Ingest Time (sec)", ingest),
+        ("Avg Query Latency (sec)", latency),
+        (f"Avg Hits in Top {args.topk}", hitk),
+        (f"Avg Recall@{args.topk}", recallk),
+    ]
+    for ax, (title, values) in zip(axs.flat, chart_data):
+        bars = ax.bar(labels, values, color="skyblue")
+        ax.set_title(title)
+        for bar, value in zip(bars, values):
+            ax.annotate(
+                f"{value:.4f}",
+                xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                xytext=(0, 5),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=10,
+                fontweight="bold",
+            )
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    fig.suptitle("Benchmark Summary: All Metrics", fontsize=18)
+    plt.savefig(out_dir / "summary_all.png", bbox_inches="tight")
+    plt.close(fig)
+    print("Saved summary_all.png in results/")
+
+    # Exclude '_config' from plotting/metrics
+    labels = [k for k in results.keys() if k != "_config"]
+    metrics = [
+        ("Ingest Time (sec)", [results[k]["ingest_time_sec"] for k in labels]),
+        (
+            "Avg Query Latency (sec)",
+            [results[k]["avg_query_latency_sec"] for k in labels],
+        ),
+        (
+            f"Avg Hits in Top {args.topk}",
+            [results[k][f"avg_hits_at_{args.topk}"] for k in labels],
+        ),
+        (
+            f"Avg Recall@{args.topk}",
+            [results[k][f"avg_recall_at_{args.topk}"] for k in labels],
+        ),
+    ]
+
+    # Create a table visualization using matplotlib
+
+    cell_text = []
+    for metric_name, values in metrics:
+        row = [f"{v:.4f}" if isinstance(v, float) else str(v) for v in values]
+        cell_text.append(row)
+
+    fig, ax = plt.subplots(figsize=(max(6, len(labels) * 2), 2 + len(metrics)))
+    table = ax.table(
+        cellText=cell_text,
+        rowLabels=[m[0] for m in metrics],
+        colLabels=labels,
+        loc="center",
+        cellLoc="center",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(12)
+    table.scale(1.2, 1.5)
+    ax.axis("off")
+    plt.title("Benchmark Metrics Table", fontsize=16, pad=20)
+    plt.tight_layout()
+    plt.savefig(out_dir / "metrics_table.png", bbox_inches="tight")
+    print("Saved metrics_table.png in results/")
 
 
 if __name__ == "__main__":
