@@ -34,14 +34,15 @@ class WeaviateDB(VectorDB):
                 Property(name="seeds", data_type=DataType.TEXT),
                 Property(name="text", data_type=DataType.TEXT),
             ],
-            # Do NOT pass distance here; let it default to COSINE
-            vector_index_config=wvc.Configure.VectorIndex.hnsw(
-                ef_construction=128,
-                max_connections=64,
-                ef=128,
-                vector_cache_max_objects=100_000,
+            vector_config=wvc.Configure.Vectors.self_provided(
+                vector_index_config=wvc.Configure.VectorIndex.hnsw(
+                    ef_construction=128,
+                    max_connections=64,
+                    ef=128,
+                    vector_cache_max_objects=100_000,
+                    distance_metric=wvc.VectorDistances.COSINE,
+                )
             ),
-            vectorizer_config=wvc.Configure.Vectorizer.none(),
         )
         self.col = self.client.collections.get(self.class_name)
 

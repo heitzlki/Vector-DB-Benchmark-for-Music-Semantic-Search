@@ -176,7 +176,9 @@ def main():
     print("Saved metrics.json")
 
     # Plot charts
-    labels = list(results.keys())
+
+    # Exclude '_config' from plotting/metrics
+    labels = [k for k in results.keys() if k != "_config"]
     ingest = [results[k]["ingest_time_sec"] for k in labels]
     latency = [results[k]["avg_query_latency_sec"] for k in labels]
     hitk = [results[k][f"avg_hits_at_{args.topk}"] for k in labels]
