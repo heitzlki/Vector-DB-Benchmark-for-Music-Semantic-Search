@@ -1,0 +1,18 @@
+python-dotenv==1.0.1
+pandas==2.2.2
+numpy==1.26.4
+tqdm==4.66.5
+matplotlib==3.10.5
+PyYAML==6.0.1
+pyarrow==21.0.0
+torch==2.8.0
+
+# Embeddings
+sentence-transformers==3.0.1
+# If you prefer OpenAI, install openai>=1.30.0 and set OPENAI_API_KEY
+openai==1.35.10
+
+# Vector DB clients
+qdrant-client==1.9.2
+pymilvus==2.6.0
+weaviate-client==4.16.7

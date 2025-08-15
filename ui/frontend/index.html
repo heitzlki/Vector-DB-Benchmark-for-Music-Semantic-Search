@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Music Semantic Search – Triple DB Compare</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Music Semantic Search</h1>
+      <p>Compare results and latency across three vector DBs.</p>
+    </header>
+
+    <section class="controls">
+      <form id="search-form">
+        <div class="row">
+          <label for="query">Query</label>
+          <input type="text" id="query" name="query" placeholder="e.g. aggressive rap song" required />
+        </div>
+        <div class="row">
+          <label for="topk">Top-K</label>
+          <input type="number" id="topk" name="topk" min="1" max="50" value="10" />
+        </div>
+        <div class="row">
+          <label for="model">Model</label>
+          <input type="text" id="model" name="model" value="sentence-transformers/all-MiniLM-L6-v2" />
+        </div>
+
+        <fieldset class="row">
+          <legend>Databases (pick three)</legend>
+          <label><input type="checkbox" name="db" value="qdrant" checked /> Qdrant</label>
+          <label><input type="checkbox" name="db" value="milvus" checked /> Milvus</label>
+          <label><input type="checkbox" name="db" value="weaviate" checked /> Weaviate</label>
+        </fieldset>
+
+        <div class="row actions">
+          <button type="submit">Search</button>
+          <span id="status" class="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <section class="results" id="results">
+      <div class="col" id="col-qdrant">
+        <h2>Qdrant <small class="metric" id="lat-qdrant"></small></h2>
+        <ul class="list" id="list-qdrant"></ul>
+        <div class="error" id="err-qdrant"></div>
+      </div>
+      <div class="col" id="col-milvus">
+        <h2>Milvus <small class="metric" id="lat-milvus"></small></h2>
+        <ul class="list" id="list-milvus"></ul>
+        <div class="error" id="err-milvus"></div>
+      </div>
+      <div class="col" id="col-weaviate">
+        <h2>Weaviate <small class="metric" id="lat-weaviate"></small></h2>
+        <ul class="list" id="list-weaviate"></ul>
+        <div class="error" id="err-weaviate"></div>
+      </div>
+    </section>
+
+    <script src="/app.js"></script>
+  </body>
+  </html>

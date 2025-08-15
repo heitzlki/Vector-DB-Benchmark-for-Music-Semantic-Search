@@ -1,0 +1,22 @@
+# Define shared queries and weak labels for heuristic relevance
+queries:
+  - text: "aggressive rap song"
+    expected:
+      tags: ["aggressive"]
+      genres: ["rap", "hip-hop"]
+  - text: "calm and romantic ballad"
+    expected:
+      tags: ["romantic", "calm"]
+      genres: ["pop", "ballad"]
+  - text: "high energy metal track"
+    expected:
+      tags: ["energetic"]
+      genres: ["metal"]
+  - text: "melancholic hip-hop vibe"
+    expected:
+      tags: ["sad", "melancholy"]
+      genres: ["hip-hop"]
+  - text: "uplifting pop anthem"
+    expected:
+      tags: ["happy", "uplifting"]
+      genres: ["pop"]
