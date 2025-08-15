@@ -58,8 +58,15 @@ def main():
     ap.add_argument("--query_model", default="sentence-transformers/all-MiniLM-L6-v2")
     args = ap.parse_args()
 
+
     vectors, payloads = load_embeddings(args.embeddings)
     dim = vectors.shape[1]
+    # Check normalization: all vectors should have norm ~1
+    norms = np.linalg.norm(vectors, axis=1)
+    if not np.allclose(norms, 1.0, atol=1e-3):
+        print("Warning: Not all vectors are normalized! Min norm:", norms.min(), "Max norm:", norms.max())
+    else:
+        print("All vectors are normalized (L2 norm ~1)")
 
     with open(args.queries, "r") as f:
         cfg = yaml.safe_load(f)
@@ -80,6 +87,15 @@ def main():
         return idx[np.argsort(-sims[idx])]
 
     results = {}
+    # Add config metadata
+    results["_config"] = {
+        "batch_size": 2000,
+        "hnsw_params": {"M": 16, "efConstruction": 128, "ef": 128},
+        "metric": "COSINE",
+        "model": args.query_model,
+        "dataset_size": len(vectors),
+        "repetitions": args.repetitions
+    }
     for db_name in args.dbs:
         print(f"Setting up {db_name}")
         db = get_db(db_name, args)
@@ -121,14 +137,14 @@ def main():
                 # Map result ids to row indices
                 res_ids = []
                 for r in res:
-                    rid = r.get("id")
-                    if isinstance(rid, (int, np.integer)):
-                        res_ids.append(int(rid))
+                    # Always try to use row_id from payload for recall matching
+                    pid = r.get("payload", {}).get("row_id")
+                    if isinstance(pid, (int, np.integer)):
+                        res_ids.append(int(pid))
                     else:
-                        # Fall back to row_id in payload (Weaviate)
-                        pid = r.get("payload", {}).get("row_id")
-                        if isinstance(pid, (int, np.integer)):
-                            res_ids.append(int(pid))
+                        rid = r.get("id")
+                        if isinstance(rid, (int, np.integer)):
+                            res_ids.append(int(rid))
                 inter = len(true_set.intersection(set(res_ids)))
                 recalls.append(inter / float(args.topk) if args.topk > 0 else 0.0)
 

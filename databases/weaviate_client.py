@@ -63,13 +63,9 @@ class WeaviateDB(VectorDB):
         # crude size estimate per object: vector bytes + ~512B overhead for props
         dim = len(vectors[0]) if vectors else 0
         bytes_per_obj = dim * 4 + 512
-        TARGET_MB = 50  # aim for ~50MB batches to be safe
-        max_per_batch = max(
-            1, min(10_000, int((TARGET_MB * 1024 * 1024) / max(1, bytes_per_obj)))
-        )
-
-        for start in range(0, len(objs), max_per_batch):
-            chunk = objs[start : start + max_per_batch]
+        BATCH = 2000  # standardized batch size
+        for start in range(0, len(objs), BATCH):
+            chunk = objs[start : start + BATCH]
             self.col.data.insert_many(chunk)
 
     def search(self, query: List[float], top_k: int) -> List[Dict[str, Any]]:
