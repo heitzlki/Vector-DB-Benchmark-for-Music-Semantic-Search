@@ -70,18 +70,20 @@ class Milvus(VectorDB):
         texts = [self._safe_str(p.get("text", "")) for p in payloads]
 
         # Batch inserts to avoid gRPC 64 MB cap
-        BATCH = 2000  # standardized batch size
+        BATCH = 200  # standardized batch size
         for i in range(0, N, BATCH):
             sl = slice(i, i + BATCH)
-            self.col.insert([
-                ids[sl],
-                vectors[sl],
-                tracks[sl],
-                artists[sl],
-                genres[sl],
-                seeds[sl],
-                texts[sl],
-            ])
+            self.col.insert(
+                [
+                    ids[sl],
+                    vectors[sl],
+                    tracks[sl],
+                    artists[sl],
+                    genres[sl],
+                    seeds[sl],
+                    texts[sl],
+                ]
+            )
 
         self.col.flush()
 

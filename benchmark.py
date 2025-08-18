@@ -44,6 +44,10 @@ def get_db(name: str, args) -> Any:
         )
     if name == "weaviate":
         return WeaviateDB(url=os.getenv("WEAVIATE_URL", "http://localhost:8080"))
+    if name == "pinecone":
+        from databases.pinecone_client import PineconeClient
+
+        return PineconeClient()
     if name == "topk":
         from databases.topk_client import TopKClient
 
@@ -131,7 +135,10 @@ def main():
         else:
             db.setup(dim=dim)
         t1 = time.time()
-        db.upsert(vectors=vectors.tolist(), payloads=payloads)
+        if db_name.lower() == "pinecone":
+            db.upsert(vectors=vectors.tolist(), payloads=payloads, batch_size=200)
+        else:
+            db.upsert(vectors=vectors.tolist(), payloads=payloads)
         ingest_time = time.time() - t1
         setup_time = t1 - t0
 
@@ -150,10 +157,12 @@ def main():
             first_latency = None
             import random
 
+            # Use the same concurrency for all DBs
+            db_concurrency = args.concurrency
+
             for rep in range(args.repetitions):
                 order = list(range(len(queries)))
                 random.shuffle(order)
-                # Concurrency: use ThreadPoolExecutor if concurrency > 1
                 from concurrent.futures import ThreadPoolExecutor, as_completed
 
                 def _one_query(q):
@@ -165,7 +174,7 @@ def main():
 
                 s_all = time.time()
                 futs = []
-                with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
+                with ThreadPoolExecutor(max_workers=db_concurrency) as ex:
                     futs = [ex.submit(_one_query, queries[idx]) for idx in order]
                     for f in as_completed(futs):
                         latency, res, q = f.result()
@@ -180,17 +189,31 @@ def main():
                         true_idx = exact_topk_indices(
                             np.array(q_vec, dtype=np.float32), vectors, k
                         )
-                        true_set = set(int(i) for i in true_idx.tolist())
-                        res_ids = []
-                        for r in res:
-                            pid = r.get("payload", {}).get("row_id")
-                            if isinstance(pid, (int, np.integer)):
-                                res_ids.append(int(pid))
-                            else:
-                                rid = r.get("id")
-                                if isinstance(rid, (int, np.integer)):
-                                    res_ids.append(int(rid))
-                        inter = len(true_set.intersection(set(res_ids)))
+                        if db_name.lower() == "pinecone":
+                            # Compare as strings for Pinecone
+                            true_set = set(str(i) for i in true_idx.tolist())
+                            res_ids = []
+                            for r in res:
+                                pid = r.get("payload", {}).get("row_id")
+                                if pid is not None:
+                                    res_ids.append(str(pid))
+                                else:
+                                    rid = r.get("id")
+                                    if rid is not None:
+                                        res_ids.append(str(rid))
+                            inter = len(true_set.intersection(set(res_ids)))
+                        else:
+                            true_set = set(int(i) for i in true_idx.tolist())
+                            res_ids = []
+                            for r in res:
+                                pid = r.get("payload", {}).get("row_id")
+                                if isinstance(pid, (int, np.integer)):
+                                    res_ids.append(int(pid))
+                                else:
+                                    rid = r.get("id")
+                                    if isinstance(rid, (int, np.integer)):
+                                        res_ids.append(int(rid))
+                            inter = len(true_set.intersection(set(res_ids)))
                         recalls.append(inter / float(k) if k > 0 else 0.0)
                 wall = time.time() - s_all
                 qps = len(queries) / wall if wall > 0 else 0.0
@@ -219,7 +242,9 @@ def main():
                 "avg_qps": avg_qps,
             }
 
-        db.teardown()
+        # Do not teardown Pinecone after benchmarking so the index persists for the search engine
+        if db_name.lower() != "pinecone":
+            db.teardown()
 
     # Save results
     out_dir = Path("results")

@@ -46,7 +46,7 @@ class TopKClient:
                 "text": meta.get("text", ""),
             }
             docs.append(doc)
-        BATCH_SIZE = 500
+    BATCH_SIZE = 200
         for i in range(0, len(docs), BATCH_SIZE):
             batch = docs[i : i + BATCH_SIZE]
             self.client.collection(self.collection).upsert(batch)

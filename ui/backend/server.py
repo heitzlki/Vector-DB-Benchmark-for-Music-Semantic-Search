@@ -7,9 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
+
 from databases.qdrant_client import Qdrant
 from databases.milvus_client import Milvus
 from databases.weaviate_client import WeaviateDB
+from databases.pinecone_client import PineconeClient
 
 
 # --------------------
@@ -51,6 +53,10 @@ def get_db(name: str) -> Any:
         )
     if name == "weaviate":
         return WeaviateDB(url=os.getenv("WEAVIATE_URL", "http://localhost:8080"))
+    if name == "pinecone":
+        client = PineconeClient()
+        client.print_index_stats()
+        return client
     raise ValueError(f"Unknown DB {name}")
 
 
@@ -74,7 +80,7 @@ app.add_middleware(
 class SearchRequest(BaseModel):
     query: str
     topk: int = 10
-    dbs: List[str] = ["qdrant", "milvus", "weaviate"]
+    dbs: List[str] = ["qdrant", "milvus", "weaviate", "pinecone"]
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -133,37 +139,6 @@ def _startup_warmup():
             pass
 
 
-# def _maybe_ingest_for_db(db_name: str):
-#     """Optionally ingest embeddings from parquet on first use if configured.
-
-#     Controlled by env EMBEDDINGS_PARQUET; if set, we will load once per DB.
-#     """
-#     global _dim
-#     parquet_path = os.getenv("EMBEDDINGS_PARQUET")
-#     if not parquet_path:
-#         return  # No ingestion configured
-
-#     if _loaded.get(db_name):
-#         return
-
-#     import pandas as pd
-#     import numpy as np
-
-#     df = pd.read_parquet(parquet_path)
-#     vectors = np.array(df["embedding"].tolist(), dtype=np.float32)
-#     payloads = df[["track", "artist", "genre", "seeds", "text"]].to_dict(
-#         orient="records"
-#     )
-#     _dim = vectors.shape[1]
-
-#     db = _clients[db_name]
-#     db.setup(dim=_dim)
-#     db.upsert(vectors=vectors.tolist(), payloads=payloads)
-
-#     _ensure_collection_loaded(db_name)
-#     _loaded[db_name] = True
-
-
 @app.post("/search", response_model=SearchResponse)
 def search(req: SearchRequest) -> SearchResponse:
     # Prepare query embedding (with graceful ImportError handling)
@@ -182,16 +157,15 @@ def search(req: SearchRequest) -> SearchResponse:
         try:
             if name not in _clients:
                 _clients[name] = get_db(name)
-            # Optionally ingest on first touch if configured
-            # _maybe_ingest_for_db(name)
+            # Only connect and search; do not ingest or upsert any data
 
             # Ensure collection is loaded and warm once per DB
             if not _WARMED.get(name):
                 try:
                     _ensure_collection_loaded(name)
                     _clients[name].search(q_vec, top_k=1)  # warm-up search
-                except Exception:
-                    pass
+                except Exception as warm_e:
+                    print(f"[WARN] Warmup failed for {name}: {warm_e}")
                 _WARMED[name] = True
 
             s0 = time.time()
@@ -221,9 +195,18 @@ def search(req: SearchRequest) -> SearchResponse:
 
             by_db[name] = DBResult(ok=True, latency_ms=latency_ms, results=normalized)
         except Exception as e:
-            by_db[name] = DBResult(ok=False, error=str(e))
+            print(f"[ERROR] Search failed for {name}: {e}")
+            by_db[name] = DBResult(ok=False, error=str(e), results=[])
+    # Ensure all requested DBs are present in by_db, even if missing
+    for name in req.dbs:
+        if name not in by_db:
+            by_db[name] = DBResult(ok=False, error="No results", results=[])
 
-    return SearchResponse(query=req.query, topk=req.topk, model=req.model, by_db=by_db)
+    # Normalize all by_db keys to lowercase for frontend compatibility
+    by_db_lower = {k.lower(): v for k, v in by_db.items()}
+    return SearchResponse(
+        query=req.query, topk=req.topk, model=req.model, by_db=by_db_lower
+    )
 
 
 def _ensure_collection_loaded(db_name: str):

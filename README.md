@@ -56,6 +56,16 @@ python benchmark.py   --csv data/muse.csv   --embeddings data/embeddings.parquet
 
 Results will be saved in `results/metrics.json` and `results/summary.png`.
 
+#### Optional: Teardown After Benchmark
+
+By default, the benchmark will **not** delete the database or index after running, so you can use the data in the backend or UI. If you want to delete (teardown) the DB/index after benchmarking, use the `--teardown_after_benchmark` flag:
+
+```
+python benchmark.py --csv data/muse.csv --embeddings data/embeddings.parquet --dbs pinecone --teardown_after_benchmark
+```
+
+This is useful if you want to ensure a clean state after benchmarking and do not need to keep the data for further use.
+
 ## Heuristic relevance
 
 We do not have human labeled query relevance. For a light touch metric we map natural language queries to expected tags or genres, then measure hit rate in the payload of the top-k results. This is weak supervision and should be presented as such in your video.

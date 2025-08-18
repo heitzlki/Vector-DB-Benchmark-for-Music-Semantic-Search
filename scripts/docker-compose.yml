@@ -46,7 +46,7 @@ services:
 
   minio:
     container_name: milvus-minio
-    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    image: minio/minio:RELEASE.2024-06-11T03-13-30Z
     environment:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
@@ -60,7 +60,17 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
-      retries: 3
+
+  pinecone:
+    image: ghcr.io/pinecone-io/pinecone-local:latest
+    environment:
+      PORT: 5080
+      PINECONE_HOST: localhost
+    ports:
+      - "5080-5090:5080-5090"
+    platform: linux/amd64
+    volumes:
+      - ./volumes/pinecone:/data
 
   milvus:
     container_name: milvus-standalone

@@ -5,7 +5,7 @@ from qdrant_client.models import VectorParams, Distance, HnswConfigDiff, SearchP
 from .base import VectorDB
 
 HTTP_TIMEOUT = 300.0  # seconds
-BATCH_SIZE = 2000  # standardized batch size
+BATCH_SIZE = 200  # standardized batch size
 PARALLEL = 2  # 0 = auto, or small integer
 
 

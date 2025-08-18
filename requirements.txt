@@ -6,6 +6,8 @@ matplotlib==3.10.5
 PyYAML==6.0.1
 pyarrow==21.0.0
 torch==2.8.0
+uvicorn
+fastapi
 
 # Embeddings
 sentence-transformers==3.0.1
@@ -17,3 +19,7 @@ qdrant-client==1.9.2
 pymilvus==2.6.0
 weaviate-client==4.16.7
 topk-sdk
+pinecone>=4.0.0
+google-api-core
+protobuf
+googleapis-common-protos
