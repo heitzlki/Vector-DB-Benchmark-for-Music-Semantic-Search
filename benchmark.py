@@ -1,3 +1,6 @@
+import os
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import argparse
 import os
 import time
@@ -41,6 +44,10 @@ def get_db(name: str, args) -> Any:
         )
     if name == "weaviate":
         return WeaviateDB(url=os.getenv("WEAVIATE_URL", "http://localhost:8080"))
+    if name == "topk":
+        from databases.topk_client import TopKClient
+
+        return TopKClient()
 
 
 def main():
@@ -53,8 +60,16 @@ def main():
     )
     ap.add_argument("--queries", default="queries.yaml", help="YAML file with queries")
     ap.add_argument("--topk", type=int, default=10)
-    ap.add_argument("--topk_sweep", nargs="*", type=int, default=None, help="List of k values to sweep (e.g. 5 10 50)")
-    ap.add_argument("--concurrency", type=int, default=1, help="Number of concurrent query workers")
+    ap.add_argument(
+        "--topk_sweep",
+        nargs="*",
+        type=int,
+        default=None,
+        help="List of k values to sweep (e.g. 5 10 50)",
+    )
+    ap.add_argument(
+        "--concurrency", type=int, default=1, help="Number of concurrent query workers"
+    )
     ap.add_argument("--repetitions", type=int, default=3)
     ap.add_argument(
         "--warmup", type=int, default=1, help="Warm-up passes per DB (not timed)"
@@ -111,7 +126,10 @@ def main():
         print(f"Setting up {db_name}")
         db = get_db(db_name, args)
         t0 = time.time()
-        db.setup(dim=dim)
+        if db_name.lower() == "topk":
+            db.setup()
+        else:
+            db.setup(dim=dim)
         t1 = time.time()
         db.upsert(vectors=vectors.tolist(), payloads=payloads)
         ingest_time = time.time() - t1
@@ -131,11 +149,13 @@ def main():
             qps_by_rep = []
             first_latency = None
             import random
+
             for rep in range(args.repetitions):
                 order = list(range(len(queries)))
                 random.shuffle(order)
                 # Concurrency: use ThreadPoolExecutor if concurrency > 1
                 from concurrent.futures import ThreadPoolExecutor, as_completed
+
                 def _one_query(q):
                     q_vec = embed_query(q["text"], query_model)
                     s0 = time.time()
@@ -199,8 +219,6 @@ def main():
                 "avg_qps": avg_qps,
             }
 
-
-
         db.teardown()
 
     # Save results
@@ -209,19 +227,22 @@ def main():
 
     with open(out_dir / "metrics.json", "w") as f:
         import json
+
         json.dump(results, f, indent=2)
     print("Saved metrics.json")
 
     # --- Call plot_benchmarks.py to generate summary image ---
     import subprocess
+
     plot_script = Path(__file__).parent / "plot_benchmarks.py"
     metrics_path = out_dir / "metrics.json"
     out_prefix = out_dir / "benchmark_summary"
     try:
-        subprocess.run(["python", str(plot_script), str(metrics_path), str(out_prefix)], check=True)
+        subprocess.run(
+            ["python", str(plot_script), str(metrics_path), str(out_prefix)], check=True
+        )
     except Exception as e:
         print(f"[WARN] Could not run plot_benchmarks.py: {e}")
-
 
     # --- New plotting for per-k, per-metric results ---
     # Get all k values
@@ -229,7 +250,13 @@ def main():
     for db_name in results:
         if db_name == "_config":
             continue
-        all_ks.update([int(k.split("=")[1]) for k in results[db_name].keys() if k.startswith("k=")])
+        all_ks.update(
+            [
+                int(k.split("=")[1])
+                for k in results[db_name].keys()
+                if k.startswith("k=")
+            ]
+        )
     all_ks = sorted(all_ks)
     # List of metrics to plot
     metric_keys = [
@@ -249,7 +276,10 @@ def main():
         metric_keys.append((f"avg_recall_at_{k}", f"Avg Recall@{k}"))
 
     # For each k, plot each metric for all DBs
+
     for k in all_ks:
+        k_dir = out_dir / f"k{k}"
+        k_dir.mkdir(exist_ok=True)
         for metric_key, metric_label in metric_keys:
             values = []
             db_labels = []
@@ -280,17 +310,31 @@ def main():
                 )
             plt.tight_layout()
             fname = (
-                metric_label.lower().replace(" ", "_").replace("@", "at").replace("(", "").replace(")", "").replace("/", "_")
+                metric_label.lower()
+                .replace(" ", "_")
+                .replace("@", "at")
+                .replace("(", "")
+                .replace(")", "")
+                .replace("/", "_")
                 + f"_k{k}.png"
             )
-            plt.savefig(out_dir / fname, bbox_inches="tight")
+            plt.savefig(k_dir / fname, bbox_inches="tight")
             plt.close(fig)
-            print(f"Saved {fname} in results/")
+            print(f"Saved {fname} in {k_dir}/")
 
         # Table for all metrics for this k
         table_metrics = [
-            "avg_query_latency_sec", "p50_query_latency_sec", "p95_query_latency_sec", "p99_query_latency_sec", "latency_stddev_sec",
-            "first_query_latency_sec", "avg_qps", "ingest_time_sec", "setup_time_sec", f"avg_hits_at_{k}", f"avg_recall_at_{k}"
+            "avg_query_latency_sec",
+            "p50_query_latency_sec",
+            "p95_query_latency_sec",
+            "p99_query_latency_sec",
+            "latency_stddev_sec",
+            "first_query_latency_sec",
+            "avg_qps",
+            "ingest_time_sec",
+            "setup_time_sec",
+            f"avg_hits_at_{k}",
+            f"avg_recall_at_{k}",
         ]
         db_labels = [db for db in results if db != "_config"]
         cell_text = []
@@ -299,10 +343,16 @@ def main():
             row = []
             for db_name in db_labels:
                 v = results[db_name].get(f"k={k}", {}).get(metric_key, None)
-                row.append(f"{v:.4f}" if isinstance(v, float) else (str(v) if v is not None else "-"))
+                row.append(
+                    f"{v:.4f}"
+                    if isinstance(v, float)
+                    else (str(v) if v is not None else "-")
+                )
             cell_text.append(row)
             row_labels.append(metric_key)
-        fig, ax = plt.subplots(figsize=(max(6, len(db_labels) * 2), 2 + len(table_metrics)))
+        fig, ax = plt.subplots(
+            figsize=(max(6, len(db_labels) * 2), 2 + len(table_metrics))
+        )
         table = ax.table(
             cellText=cell_text,
             rowLabels=row_labels,
@@ -316,10 +366,9 @@ def main():
         ax.axis("off")
         plt.title(f"Benchmark Metrics Table (k={k})", fontsize=16, pad=20)
         plt.tight_layout()
-        plt.savefig(out_dir / f"metrics_table_k{k}.png", bbox_inches="tight")
+        plt.savefig(k_dir / f"metrics_table_k{k}.png", bbox_inches="tight")
         plt.close(fig)
-        print(f"Saved metrics_table_k{k}.png in results/")
-
+        print(f"Saved metrics_table_k{k}.png in {k_dir}/")
 
 
 if __name__ == "__main__":
