@@ -3,6 +3,7 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+
 scripts/.weaviate-data/
 scripts/volumes/
 
