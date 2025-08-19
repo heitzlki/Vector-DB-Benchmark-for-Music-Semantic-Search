@@ -63,6 +63,10 @@
             ><input type="checkbox" name="db" value="pinecone" checked />
             Pinecone</label
           >
+          <label
+            ><input type="checkbox" name="db" value="topk" checked />
+            TopK</label
+          >
         </fieldset>
 
         <div class="row actions">
@@ -92,6 +96,11 @@
         <h2>Pinecone <small class="metric" id="lat-pinecone"></small></h2>
         <ul class="list" id="list-pinecone"></ul>
         <div class="error" id="err-pinecone"></div>
+      </div>
+      <div class="col" id="col-topk">
+        <h2>TopK <small class="metric" id="lat-topk"></small></h2>
+        <ul class="list" id="list-topk"></ul>
+        <div class="error" id="err-topk"></div>
       </div>
     </section>
 

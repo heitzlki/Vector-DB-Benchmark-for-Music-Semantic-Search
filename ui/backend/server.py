@@ -8,10 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+
 from databases.qdrant_client import Qdrant
 from databases.milvus_client import Milvus
 from databases.weaviate_client import WeaviateDB
 from databases.pinecone_client import PineconeClient
+from databases.topk_client import TopKClient
 
 
 # --------------------
@@ -57,6 +59,8 @@ def get_db(name: str) -> Any:
         client = PineconeClient()
         client.print_index_stats()
         return client
+    if name == "topk":
+        return TopKClient()
     raise ValueError(f"Unknown DB {name}")
 
 
@@ -80,7 +84,7 @@ app.add_middleware(
 class SearchRequest(BaseModel):
     query: str
     topk: int = 10
-    dbs: List[str] = ["qdrant", "milvus", "weaviate", "pinecone"]
+    dbs: List[str] = ["qdrant", "milvus", "weaviate", "pinecone", "topk"]
     model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
 

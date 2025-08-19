@@ -14,9 +14,11 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from utils.metrics import hits_at_k
+
 from databases.qdrant_client import Qdrant
 from databases.milvus_client import Milvus
 from databases.weaviate_client import WeaviateDB
+from databases.pinecone_client import PineconeClient
 
 
 def load_embeddings(parquet_path: str):
@@ -44,14 +46,16 @@ def get_db(name: str, args) -> Any:
         )
     if name == "weaviate":
         return WeaviateDB(url=os.getenv("WEAVIATE_URL", "http://localhost:8080"))
-    if name == "pinecone":
-        from databases.pinecone_client import PineconeClient
-
-        return PineconeClient()
     if name == "topk":
         from databases.topk_client import TopKClient
 
         return TopKClient()
+
+    if name == "pinecone":
+        # You may want to make dimension configurable; default to 384
+        return PineconeClient(dimension=getattr(args, "dim", 384))
+
+    return None
 
 
 def main():
@@ -79,6 +83,11 @@ def main():
         "--warmup", type=int, default=1, help="Warm-up passes per DB (not timed)"
     )
     ap.add_argument("--query_model", default="sentence-transformers/all-MiniLM-L6-v2")
+    ap.add_argument(
+        "--teardown_after_benchmark",
+        action="store_true",
+        help="If set, teardown (delete) the DB/index after benchmarking. Default: False (preserve index)",
+    )
     args = ap.parse_args()
 
     vectors, payloads = load_embeddings(args.embeddings)
@@ -129,16 +138,19 @@ def main():
     for db_name in args.dbs:
         print(f"Setting up {db_name}")
         db = get_db(db_name, args)
+        # Teardown (delete) index before benchmarking, if it exists, for a clean state
+        if hasattr(db, "teardown"):
+            try:
+                db.teardown()
+            except Exception as e:
+                print(f"[WARN] Could not teardown {db_name} before benchmarking: {e}")
         t0 = time.time()
         if db_name.lower() == "topk":
             db.setup()
         else:
             db.setup(dim=dim)
         t1 = time.time()
-        if db_name.lower() == "pinecone":
-            db.upsert(vectors=vectors.tolist(), payloads=payloads, batch_size=200)
-        else:
-            db.upsert(vectors=vectors.tolist(), payloads=payloads)
+        db.upsert(vectors=vectors.tolist(), payloads=payloads)
         ingest_time = time.time() - t1
         setup_time = t1 - t0
 
@@ -157,12 +169,10 @@ def main():
             first_latency = None
             import random
 
-            # Use the same concurrency for all DBs
-            db_concurrency = args.concurrency
-
             for rep in range(args.repetitions):
                 order = list(range(len(queries)))
                 random.shuffle(order)
+                # Concurrency: use ThreadPoolExecutor if concurrency > 1
                 from concurrent.futures import ThreadPoolExecutor, as_completed
 
                 def _one_query(q):
@@ -174,7 +184,7 @@ def main():
 
                 s_all = time.time()
                 futs = []
-                with ThreadPoolExecutor(max_workers=db_concurrency) as ex:
+                with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
                     futs = [ex.submit(_one_query, queries[idx]) for idx in order]
                     for f in as_completed(futs):
                         latency, res, q = f.result()
@@ -189,30 +199,29 @@ def main():
                         true_idx = exact_topk_indices(
                             np.array(q_vec, dtype=np.float32), vectors, k
                         )
-                        if db_name.lower() == "pinecone":
-                            # Compare as strings for Pinecone
-                            true_set = set(str(i) for i in true_idx.tolist())
-                            res_ids = []
-                            for r in res:
-                                pid = r.get("payload", {}).get("row_id")
+                        true_set = set(int(i) for i in true_idx.tolist())
+                        res_ids = []
+                        for r in res:
+                            pid = r.get("payload", {}).get("row_id")
+                            rid = r.get("id")
+                            if db_name.lower() == "pinecone":
+                                print(f"  result id: {rid}, payload row_id: {pid}")
+                                # Always compare as strings for Pinecone
                                 if pid is not None:
                                     res_ids.append(str(pid))
-                                else:
-                                    rid = r.get("id")
-                                    if rid is not None:
-                                        res_ids.append(str(rid))
-                            inter = len(true_set.intersection(set(res_ids)))
-                        else:
-                            true_set = set(int(i) for i in true_idx.tolist())
-                            res_ids = []
-                            for r in res:
-                                pid = r.get("payload", {}).get("row_id")
+                                elif rid is not None:
+                                    res_ids.append(str(rid))
+                            else:
                                 if isinstance(pid, (int, np.integer)):
                                     res_ids.append(int(pid))
                                 else:
-                                    rid = r.get("id")
                                     if isinstance(rid, (int, np.integer)):
                                         res_ids.append(int(rid))
+                        # For Pinecone, compare as strings
+                        if db_name.lower() == "pinecone":
+                            true_set_str = set(str(i) for i in true_idx.tolist())
+                            inter = len(true_set_str.intersection(set(res_ids)))
+                        else:
                             inter = len(true_set.intersection(set(res_ids)))
                         recalls.append(inter / float(k) if k > 0 else 0.0)
                 wall = time.time() - s_all
@@ -242,9 +251,18 @@ def main():
                 "avg_qps": avg_qps,
             }
 
-        # Do not teardown Pinecone after benchmarking so the index persists for the search engine
-        if db_name.lower() != "pinecone":
-            db.teardown()
+        # Optionally teardown after benchmarking if flag is set
+        if getattr(args, "teardown_after_benchmark", False):
+            if hasattr(db, "teardown"):
+                try:
+                    db.teardown()
+                    print(
+                        f"[DEBUG] {db_name} index/DB torn down after benchmarking (flag set)."
+                    )
+                except Exception as e:
+                    print(
+                        f"[WARN] Could not teardown {db_name} after benchmarking: {e}"
+                    )
 
     # Save results
     out_dir = Path("results")

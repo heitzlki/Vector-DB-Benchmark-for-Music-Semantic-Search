@@ -1,7 +1,7 @@
 const form = document.getElementById("search-form");
 const statusEl = document.getElementById("status");
 
-const dbKeys = ["qdrant", "milvus", "weaviate", "pinecone"];
+const dbKeys = ["qdrant", "milvus", "weaviate", "pinecone", "topk"];
 const latEls = Object.fromEntries(
   dbKeys.map((k) => [k, document.getElementById(`lat-${k}`)])
 );
