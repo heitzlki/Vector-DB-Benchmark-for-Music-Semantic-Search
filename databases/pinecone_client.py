@@ -27,11 +27,12 @@ class PineconeClient:
             raise
         out = []
         for match in response.get("matches", []):
+            payload = match.get("metadata", {})
             out.append(
                 {
                     "id": match.get("id"),
                     "score": match.get("score"),
-                    "payload": match.get("metadata", {}),
+                    "payload": payload,
                 }
             )
         return out
@@ -95,8 +96,15 @@ class PineconeClient:
             # Replace None values in metadata with empty string
             clean_meta = {k: (v if v is not None else "") for k, v in meta.items()}
             # Use row_id as id if available, else fallback to index
-            record_id = str(meta.get("row_id", i))
-            clean_meta["row_id"] = record_id  # Ensure row_id is in metadata for recall
+            row_id = meta.get("row_id", i)
+            try:
+                row_id_int = int(row_id)
+            except Exception:
+                row_id_int = i
+            record_id = str(row_id_int)
+            clean_meta["row_id"] = (
+                row_id_int  # Ensure row_id is in metadata for recall as int
+            )
             pinecone_vectors.append(
                 {"id": record_id, "values": vec, "metadata": clean_meta}
             )

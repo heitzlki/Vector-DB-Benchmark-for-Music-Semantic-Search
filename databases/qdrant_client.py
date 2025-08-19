@@ -10,6 +10,10 @@ PARALLEL = 2  # 0 = auto, or small integer
 
 
 class Qdrant(VectorDB):
+    def close(self):
+        # QdrantClient does not require explicit close, but method is needed for interface
+        pass
+
     def __init__(self, url: str = "http://localhost:6333", collection: str = "music"):
         # Honor the configured URL; avoid hardcoding localhost.
         # Using HTTP URL keeps behavior consistent across local/remote.

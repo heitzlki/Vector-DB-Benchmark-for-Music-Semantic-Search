@@ -3,11 +3,13 @@ pandas==2.2.2
 numpy==1.26.4
 tqdm==4.66.5
 matplotlib==3.10.5
+mplcyberpunk
 PyYAML==6.0.1
 pyarrow==21.0.0
 torch==2.8.0
 uvicorn
 fastapi
+yaspin
 
 # Embeddings
 sentence-transformers==3.0.1
@@ -17,7 +19,7 @@ openai==1.35.10
 # Vector DB clients
 qdrant-client==1.9.2
 pymilvus==2.6.0
-weaviate-client==4.16.7
+weaviate-client==v4.16.8
 topk-sdk
 pinecone>=4.0.0
 google-api-core

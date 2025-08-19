@@ -122,7 +122,7 @@ def _startup_warmup():
         # Ignore model warmup failures; they will surface on first request
         pass
 
-    dbs = os.getenv("UI_WARMUP_DBS", "qdrant,milvus,weaviate").split(",")
+    dbs = os.getenv("UI_WARMUP_DBS", "qdrant,milvus,weaviate,pinecone,topk").split(",")
     qvec: Optional[List[float]] = None
     for name in [d.strip() for d in dbs if d.strip()]:
         try:

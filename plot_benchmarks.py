@@ -118,20 +118,29 @@ def plot_latency_lines(db_names, k_values, latency, out_path: Path):
     fig = plt.figure(figsize=(10, 6))
     ax = fig.add_subplot(111)
 
+    # Plot each DB only once in the legend
     lines = []
+    labels = []
     for db in db_names:
         y = latency[db]
         (line,) = ax.plot(k_values, y, marker="o", label=db)
         lines.append(line)
+        labels.append(db)
         add_value_labels_points(ax, k_values, y, fmt="{:.4f}")
 
-    mplcyberpunk.make_lines_glow(lines)
+    mplcyberpunk.make_lines_glow(ax)
 
     ax.set_xticks(k_values)
     ax.set_xlabel("k")
     ax.set_ylabel("Latency (s)")
     ax.set_title("Latency vs. k")
-    ax.legend()
+    # Deduplicate legend labels
+    handles, legend_labels = ax.get_legend_handles_labels()
+    unique = dict()
+    for h, l in zip(handles, legend_labels):
+        if l not in unique:
+            unique[l] = h
+    ax.legend(list(unique.values()), list(unique.keys()))
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)

@@ -1,3 +1,4 @@
+from yaspin import yaspin
 import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -64,6 +65,11 @@ def get_db(name: str, args) -> Any:
 def main():
     load_dotenv()
     ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--skip_ingest",
+        action="store_true",
+        help="Skip ingestion (upsert) and go directly to query testing. Assumes data is already ingested.",
+    )
     ap.add_argument("--csv", required=True, help="Original CSV path")
     ap.add_argument("--embeddings", required=True, help="Parquet with embeddings")
     ap.add_argument(
@@ -76,7 +82,7 @@ def main():
         nargs="*",
         type=int,
         default=None,
-        help="List of k values to sweep (e.g. 5 10 50)",
+        help="List of k values to sweep (e.g. 5 10 50 200). You can provide any custom value.",
     )
     ap.add_argument(
         "--concurrency", type=int, default=1, help="Number of concurrent query workers"
@@ -95,6 +101,16 @@ def main():
 
     vectors, payloads = load_embeddings(args.embeddings)
     dim = vectors.shape[1]
+    # --- Add row_id to each payload for recall correctness ---
+    for idx, p in enumerate(payloads):
+        p["row_id"] = idx
+    # --- SHUFFLE for recall fairness ---
+    import random
+
+    combined = list(zip(vectors.tolist(), payloads))
+    random.shuffle(combined)
+    vectors_shuffled, payloads_shuffled = zip(*combined)
+    vectors_shuffled = np.array(vectors_shuffled, dtype=np.float32)
     # Check normalization: all vectors should have norm ~1
     norms = np.linalg.norm(vectors, axis=1)
     if not np.allclose(norms, 1.0, atol=1e-3):
@@ -109,7 +125,37 @@ def main():
 
     with open(args.queries, "r") as f:
         cfg = yaml.safe_load(f)
+
     queries = cfg["queries"]
+
+    # Map each query's expected tags/genres to row_ids in the upserted payloads
+    for q in queries:
+        expected_tags = set(
+            str(tag).lower() for tag in q.get("expected", {}).get("tags", [])
+        )
+        expected_genres = set(
+            str(g).lower() for g in q.get("expected", {}).get("genres", [])
+        )
+        matching_row_ids = set()
+        for p in payloads_shuffled:
+            # Parse seeds as list of tags (may be string or list)
+            seeds = p.get("seeds", [])
+            if isinstance(seeds, str):
+                try:
+                    import ast
+
+                    seeds_list = ast.literal_eval(seeds)
+                    if not isinstance(seeds_list, list):
+                        seeds_list = [seeds_list]
+                except Exception:
+                    seeds_list = [seeds]
+            else:
+                seeds_list = seeds
+            seeds_set = set(str(tag).lower() for tag in seeds_list)
+            genre = str(p.get("genre", "")).lower()
+            if seeds_set & expected_tags or genre in expected_genres:
+                matching_row_ids.add(p["row_id"])
+        q["expected_row_ids"] = matching_row_ids
 
     # Preload the query embedding model once to avoid repeated loads
     from sentence_transformers import SentenceTransformer
@@ -138,125 +184,156 @@ def main():
     }
 
     topks = args.topk_sweep or [args.topk]
+
     for db_name in args.dbs:
-        print(f"Setting up {db_name}")
-        db = get_db(db_name, args)
-        # Teardown (delete) index before benchmarking, if it exists, for a clean state
-        if hasattr(db, "teardown"):
-            try:
-                db.teardown()
-            except Exception as e:
-                print(f"[WARN] Could not teardown {db_name} before benchmarking: {e}")
-        t0 = time.time()
-        if db_name.lower() == "topk":
-            db.setup()
-        else:
-            db.setup(dim=dim)
-        t1 = time.time()
-        db.upsert(vectors=vectors.tolist(), payloads=payloads)
-        ingest_time = time.time() - t1
-        setup_time = t1 - t0
-
-        # Optional warm-up passes (not timed)
-        for _ in range(max(0, args.warmup)):
-            for q in cfg["queries"]:
-                q_vec = embed_query(q["text"], query_model)
-                _ = db.search(q_vec, top_k=topks[0])
-
         results[db_name] = {}
-        for k in topks:
-            latencies = []
-            hits = []
-            recalls = []
-            qps_by_rep = []
-            first_latency = None
-            import random
-
-            for rep in range(args.repetitions):
-                order = list(range(len(queries)))
-                random.shuffle(order)
-                # Concurrency: use ThreadPoolExecutor if concurrency > 1
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-
-                def _one_query(q):
-                    q_vec = embed_query(q["text"], query_model)
-                    s0 = time.time()
-                    res = db.search(q_vec, top_k=k)
-                    latency = time.time() - s0
-                    return latency, res, q
-
-                s_all = time.time()
-                futs = []
-                with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
-                    futs = [ex.submit(_one_query, queries[idx]) for idx in order]
-                    for f in as_completed(futs):
-                        latency, res, q = f.result()
-                        if first_latency is None:
-                            first_latency = latency
-                        latencies.append(latency)
-                        res_payloads = [r["payload"] for r in res]
-                        hitk = hits_at_k(res_payloads, q["expected"])
-                        hits.append(hitk)
-                        # Compute exact recall@k using baseline
-                        q_vec = embed_query(q["text"], query_model)
-                        true_idx = exact_topk_indices(
-                            np.array(q_vec, dtype=np.float32), vectors, k
+        try:
+            with yaspin(text=f"Setting up {db_name}", color="cyan") as spinner:
+                db = get_db(db_name, args)
+                # Teardown (delete) index before benchmarking, if it exists, for a clean state
+                if hasattr(db, "teardown"):
+                    try:
+                        db.teardown()
+                    except Exception as e:
+                        spinner.write(
+                            f"[WARN] Could not teardown {db_name} before benchmarking: {e}"
                         )
-                        true_set = set(int(i) for i in true_idx.tolist())
-                        res_ids = []
-                        for r in res:
-                            pid = r.get("payload", {}).get("row_id")
-                            rid = r.get("id")
-                            if db_name.lower() == "pinecone":
-                                print(f"  result id: {rid}, payload row_id: {pid}")
-                                # Always compare as strings for Pinecone
-                                if pid is not None:
-                                    res_ids.append(str(pid))
-                                elif rid is not None:
-                                    res_ids.append(str(rid))
-                            else:
-                                if isinstance(pid, (int, np.integer)):
-                                    res_ids.append(int(pid))
-                                else:
-                                    if isinstance(rid, (int, np.integer)):
+                # Always close WeaviateDB connection after teardown
+                if db_name.lower() == "weaviate" and hasattr(db, "close"):
+                    try:
+                        db.close()
+                    except Exception as e:
+                        spinner.write(
+                            f"[WARN] Could not close {db_name} DB connection after teardown: {e}"
+                        )
+                t0 = time.time()
+                upsert_vectors = vectors_shuffled
+                upsert_payloads = list(payloads_shuffled)
+                if db_name.lower() == "topk":
+                    db.setup()
+                else:
+                    db.setup(dim=dim)
+                t1 = time.time()
+                if not args.skip_ingest:
+                    db.upsert(vectors=upsert_vectors.tolist(), payloads=upsert_payloads)
+                    ingest_time = time.time() - t1
+                    setup_time = t1 - t0
+                    spinner.ok("✅ ")
+                else:
+                    ingest_time = 0.0
+                    setup_time = t1 - t0
+                    spinner.ok("[skipped ingest]")
+
+            # Optional warm-up passes (not timed)
+            for _ in range(max(0, args.warmup)):
+                for q in queries:
+                    q_vec = embed_query(q["text"], query_model)
+                    _ = db.search(q_vec, top_k=topks[0])
+
+            for k in topks:
+                latencies = []
+                hits = []
+                recalls = []
+                # Now safe to close DB connection after all threads/queries are done
+                if hasattr(db, "close"):
+                    try:
+                        db.close()
+                    except Exception as e:
+                        print(f"[WARN] Could not close {db_name} DB connection: {e}")
+                qps_by_rep = []
+                first_latency = None
+                import random
+
+                for rep in range(args.repetitions):
+                    order = list(range(len(queries)))
+                    random.shuffle(order)
+                    # Concurrency: use ThreadPoolExecutor if concurrency > 1
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                    def _one_query(q):
+                        q_vec = embed_query(q["text"], query_model)
+                        s0 = time.time()
+                        res = db.search(q_vec, top_k=k)
+                        latency = time.time() - s0
+                        return latency, res, q, q_vec
+
+                    s_all = time.time()
+                    futs = []
+                    with ThreadPoolExecutor(max_workers=args.concurrency) as ex:
+                        futs = [ex.submit(_one_query, queries[idx]) for idx in order]
+                        for f in as_completed(futs):
+                            latency, res, q, q_vec = f.result()
+                            if first_latency is None:
+                                first_latency = latency
+                            latencies.append(latency)
+                            res_payloads = [r["payload"] for r in res]
+                            hitk = hits_at_k(
+                                res_payloads, q.get("expected_row_ids", set())
+                            )
+                            hits.append(hitk)
+                            # Compute exact recall@k using baseline
+                            q_vec = embed_query(q["text"], query_model)
+                            true_idx = exact_topk_indices(
+                                np.array(q_vec, dtype=np.float32), vectors, k
+                            )
+                            true_set = set(int(i) for i in true_idx.tolist())
+                            res_ids = []
+                            for r in res:
+                                # if (
+                                #     rep == 0
+                                #     and len(recalls) < 3
+                                #     and db_name.lower()
+                                #     in ("pinecone", "milvus", "weaviate", "topk")
+                                # ):
+                                #     print(f"[DEBUG] Raw {db_name} result: {r}")
+                                pid = r.get("payload", {}).get("row_id")
+                                rid = r.get("id")
+                                try:
+                                    if pid is not None:
+                                        res_ids.append(int(pid))
+                                    elif rid is not None:
                                         res_ids.append(int(rid))
-                        # For Pinecone, compare as strings
-                        if db_name.lower() == "pinecone":
-                            true_set_str = set(str(i) for i in true_idx.tolist())
-                            inter = len(true_set_str.intersection(set(res_ids)))
-                        else:
+                                except Exception:
+                                    pass
+                            # (Weaviate debug logs removed)
                             inter = len(true_set.intersection(set(res_ids)))
-                        recalls.append(inter / float(k) if k > 0 else 0.0)
-                wall = time.time() - s_all
-                qps = len(queries) / wall if wall > 0 else 0.0
-                qps_by_rep.append(qps)
+                            recalls.append(inter / float(k) if k > 0 else 0.0)
+                    wall = time.time() - s_all
+                    qps = len(queries) / wall if wall > 0 else 0.0
+                    qps_by_rep.append(qps)
 
-            avg_latency = float(np.mean(latencies)) if latencies else None
-            p50_latency = float(np.percentile(latencies, 50)) if latencies else None
-            p95_latency = float(np.percentile(latencies, 95)) if latencies else None
-            p99_latency = float(np.percentile(latencies, 99)) if latencies else None
-            jitter = float(np.std(latencies)) if latencies else None
-            avg_hitk = float(np.mean(hits)) if hits else None
-            avg_recall = float(np.mean(recalls)) if recalls else None
-            avg_qps = float(np.mean(qps_by_rep)) if qps_by_rep else None
+                avg_latency = float(np.mean(latencies)) if latencies else None
+                p50_latency = float(np.percentile(latencies, 50)) if latencies else None
+                p95_latency = float(np.percentile(latencies, 95)) if latencies else None
+                p99_latency = float(np.percentile(latencies, 99)) if latencies else None
+                jitter = float(np.std(latencies)) if latencies else None
+                avg_hitk = float(np.mean(hits)) if hits else None
+                avg_recall = float(np.mean(recalls)) if recalls else None
+                avg_qps = float(np.mean(qps_by_rep)) if qps_by_rep else None
 
-            results[db_name][f"k={k}"] = {
-                "setup_time_sec": setup_time,
-                "ingest_time_sec": ingest_time,
-                "avg_query_latency_sec": avg_latency,
-                "p50_query_latency_sec": p50_latency,
-                "p95_query_latency_sec": p95_latency,
-                "p99_query_latency_sec": p99_latency,
-                "latency_stddev_sec": jitter,
-                "first_query_latency_sec": first_latency,
-                f"avg_hits_at_{k}": avg_hitk,
-                f"avg_recall_at_{k}": avg_recall,
-                "avg_qps": avg_qps,
-            }
+                results[db_name][f"k={k}"] = {
+                    "setup_time_sec": setup_time,
+                    "ingest_time_sec": ingest_time,
+                    "avg_query_latency_sec": avg_latency,
+                    "p50_query_latency_sec": p50_latency,
+                    "p95_query_latency_sec": p95_latency,
+                    "p99_query_latency_sec": p99_latency,
+                    "latency_stddev_sec": jitter,
+                    "first_query_latency_sec": first_latency,
+                    f"avg_hits_at_{k}": avg_hitk,
+                    f"avg_recall_at_{k}": avg_recall,
+                    "avg_qps": avg_qps,
+                }
+        except Exception as e:
+            import traceback
+
+            results[db_name]["error"] = str(e)
+            results[db_name]["traceback"] = traceback.format_exc()
+            print(f"[ERROR] Benchmark failed for {db_name}: {e}")
 
         # Optionally teardown after benchmarking if flag is set
         if getattr(args, "teardown_after_benchmark", False):
-            if hasattr(db, "teardown"):
+            if hasattr(db, "teardown") and db_name.lower() != "pinecone":
                 try:
                     db.teardown()
                     print(
@@ -266,6 +343,14 @@ def main():
                     print(
                         f"[WARN] Could not teardown {db_name} after benchmarking: {e}"
                     )
+                # Always close WeaviateDB connection after teardown
+                if db_name.lower() == "weaviate" and hasattr(db, "close"):
+                    try:
+                        db.close()
+                    except Exception as e:
+                        print(
+                            f"[WARN] Could not close {db_name} DB connection after teardown: {e}"
+                        )
 
     # Save results
     out_dir = Path("results")
@@ -398,8 +483,14 @@ def main():
             cell_text.append(row)
             row_labels.append(metric_key)
         fig, ax = plt.subplots(
-            figsize=(max(6, len(db_labels) * 2), 2 + len(table_metrics))
+            figsize=(
+                max(6, len(db_labels) * 2),
+                0.5 + 0.5 * len(table_metrics),
+            )  # reduce height
         )
+        # Set figure background color (cyberpunk dark)
+        fig.patch.set_facecolor("#181c2a")
+        ax.set_facecolor("#181c2a")
         table = ax.table(
             cellText=cell_text,
             rowLabels=row_labels,
@@ -409,11 +500,25 @@ def main():
         )
         table.auto_set_font_size(False)
         table.set_fontsize(12)
-        table.scale(1.2, 1.5)
+        table.scale(1.2, 1.1)  # reduce vertical scaling
+        # Set transparent background, visible text color, and brighter border for table cells
+        for key, cell in table.get_celld().items():
+            cell.set_facecolor((0, 0, 0, 0))  # transparent cell
+            cell.set_text_props(color="#97ffb6")  # cyberpunk green
+            cell.set_edgecolor("#97ffb6")  # brighter border
+        # Optionally, set header cells to a different color for contrast
+        for idx in range(len(db_labels)):
+            table[(0, idx)].set_text_props(color="#fff")  # white for headers
+        for idx in range(len(row_labels)):
+            table[(idx + 1, -1)].set_text_props(color="#fff")  # white for row labels
         ax.axis("off")
-        plt.title(f"Benchmark Metrics Table (k={k})", fontsize=16, pad=20)
+        plt.title(f"Benchmark Metrics Table (k={k})", fontsize=16, pad=20, color="#fff")
         plt.tight_layout()
-        plt.savefig(k_dir / f"metrics_table_k{k}.png", bbox_inches="tight")
+        plt.savefig(
+            k_dir / f"metrics_table_k{k}.png",
+            bbox_inches="tight",
+            facecolor=fig.get_facecolor(),
+        )
         plt.close(fig)
         print(f"Saved metrics_table_k{k}.png in {k_dir}/")
 

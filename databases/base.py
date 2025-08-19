@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
 
+
 class VectorDB(ABC):
     @abstractmethod
     def setup(self, dim: int): ...
@@ -10,3 +11,5 @@ class VectorDB(ABC):
     def search(self, query: List[float], top_k: int) -> List[Dict[str, Any]]: ...
     @abstractmethod
     def teardown(self): ...
+    @abstractmethod
+    def close(self): ...

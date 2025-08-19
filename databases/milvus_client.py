@@ -12,6 +12,10 @@ import math
 
 
 class Milvus(VectorDB):
+    def close(self):
+        # Stub implementation; add resource cleanup if needed
+        pass
+
     def __init__(
         self, host: str = "localhost", port: str = "19530", collection: str = "music"
     ):
@@ -44,6 +48,7 @@ class Milvus(VectorDB):
             FieldSchema(
                 name="id", dtype=DataType.INT64, is_primary=True, auto_id=False
             ),
+            FieldSchema(name="row_id", dtype=DataType.INT64),
             FieldSchema(name="vector", dtype=DataType.FLOAT_VECTOR, dim=dim),
             FieldSchema(name="track", dtype=DataType.VARCHAR, max_length=256),
             FieldSchema(name="artist", dtype=DataType.VARCHAR, max_length=256),
@@ -62,20 +67,20 @@ class Milvus(VectorDB):
         # Prepare columns
         N = len(vectors)
         ids = list(range(N))
+        row_ids = [int(p.get("row_id", i)) for i, p in enumerate(payloads)]
         tracks = [self._safe_str(p.get("track", "unknown")) for p in payloads]
         artists = [self._safe_str(p.get("artist", "unknown")) for p in payloads]
         genres = [self._safe_str(p.get("genre", "unknown")) for p in payloads]
-        # Use the correct key name 'seeds' to keep parity with other backends
         seeds = [self._safe_str(p.get("seeds", "")) for p in payloads]
         texts = [self._safe_str(p.get("text", "")) for p in payloads]
 
-        # Batch inserts to avoid gRPC 64 MB cap
         BATCH = 200  # standardized batch size
         for i in range(0, N, BATCH):
             sl = slice(i, i + BATCH)
             self.col.insert(
                 [
                     ids[sl],
+                    row_ids[sl],
                     vectors[sl],
                     tracks[sl],
                     artists[sl],
@@ -113,7 +118,7 @@ class Milvus(VectorDB):
             anns_field="vector",
             param={"metric_type": "COSINE", "params": {"ef": 128}},
             limit=top_k,
-            output_fields=["track", "artist", "genre", "seeds", "text"],
+            output_fields=["row_id", "track", "artist", "genre", "seeds", "text"],
         )
         out = []
         for hits in res:
@@ -123,6 +128,7 @@ class Milvus(VectorDB):
                         "id": h.id,
                         "score": float(h.distance),
                         "payload": {
+                            "row_id": h.entity.get("row_id"),
                             "track": h.entity.get("track"),
                             "artist": h.entity.get("artist"),
                             "genre": h.entity.get("genre"),

@@ -35,9 +35,10 @@ class TopKClient:
         # Upsert documents with all fields for parity, using correct TopK SDK upsert
         docs = []
         for i, (vec, meta) in enumerate(zip(vectors, payloads)):
+            row_id = meta.get("row_id", i)
             doc = {
-                "_id": str(i),
-                "id": i,
+                "_id": str(row_id),
+                "id": row_id,
                 "vector": vec,
                 "track": meta.get("track", "unknown"),
                 "artist": meta.get("artist", "unknown"),
@@ -73,6 +74,7 @@ class TopKClient:
                     "id": d.get("id"),
                     "score": d.get("vector_similarity", 0.0),
                     "payload": {
+                        "row_id": d.get("id"),
                         "track": d.get("track"),
                         "artist": d.get("artist"),
                         "genre": d.get("genre"),

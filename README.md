@@ -1,5 +1,8 @@
 # Vector DB Benchmark for Music Semantic Search
 
+> **This project is part of the Vector Database Benchmarking video:**
+> [https://youtu.be/X0PwwfcGSHU](https://youtu.be/X0PwwfcGSHU)
+
 This repository benchmarks multiple vector databases for music semantic search, using a shared dataset and query set. It provides both a CLI benchmarking tool and a web UI for side-by-side DB comparison.
 
 ## Features
@@ -119,7 +122,7 @@ The `ui/` folder provides a FastAPI backend and static frontend for live, side-b
 1. **Install dependencies**
 
 ```sh
-pip install fastapi uvicorn python-dotenv sentence-transformers numpy pandas qdrant-client pymilvus weaviate-client topk-sdk pinecone openai
+pip install -r requirements.txt
 ```
 
 2. **Configure**
@@ -155,7 +158,7 @@ uvicorn backend.server:app --reload --port 8000
 - If Docker ports conflict, edit `scripts/docker-compose.yml`
 - If you see dimension mismatch errors, check embedding model and DB index size
 - For OpenAI, set `OPENAI_API_KEY` in your environment
-- For Pinecone/TopK, set API keys in `.env`
+- For TopK, set API key in `.env`
 
 ---
 
