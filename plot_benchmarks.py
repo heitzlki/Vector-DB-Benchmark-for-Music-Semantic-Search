@@ -1,10 +1,13 @@
-
 import json
 import sys
 from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
+import mplcyberpunk
+
+plt.style.use("cyberpunk")
+
 
 def load_metrics(json_path: Path):
     with open(json_path, "r") as f:
@@ -50,34 +53,51 @@ def load_metrics(json_path: Path):
             latency[db].append(float(db_block[k_label]["avg_query_latency_sec"]))
     return db_names, k_values, ingest, qps_list, recall50, latency
 
+
 def add_value_labels_bars(ax, bars, fmt="{:.2f}"):
     for bar in bars:
         height = bar.get_height()
-        ax.annotate(fmt.format(height),
-                    xy=(bar.get_x() + bar.get_width() / 2, height),
-                    xytext=(0, 3),
-                    textcoords="offset points",
-                    ha="center", va="bottom", fontsize=9)
+        ax.annotate(
+            fmt.format(height),
+            xy=(bar.get_x() + bar.get_width() / 2, height),
+            xytext=(0, 3),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
 
 def add_value_labels_points(ax, x, y, fmt="{:.4f}"):
     for xi, yi in zip(x, y):
-        ax.annotate(fmt.format(yi),
-                    xy=(xi, yi),
-                    xytext=(0, 5),
-                    textcoords="offset points",
-                    ha="center", va="bottom", fontsize=9)
+        ax.annotate(
+            fmt.format(yi),
+            xy=(xi, yi),
+            xytext=(0, 5),
+            textcoords="offset points",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+
 
 def plot_grouped_bars(db_names, ingest, qps_list, recall50, out_path: Path):
     # Prepare data in consistent order
     x = np.arange(len(db_names))
     width = 0.25
 
-    fig = plt.figure(figsize=(10,6))
+    fig = plt.figure(figsize=(10, 6))
     ax = fig.add_subplot(111)
 
-    bars1 = ax.bar(x - width, [ingest[d] for d in db_names], width, label="Ingest Time (s)")
+    bars1 = ax.bar(
+        x - width, [ingest[d] for d in db_names], width, label="Ingest Time (s)"
+    )
     bars2 = ax.bar(x, [qps_list[d] for d in db_names], width, label="QPS (avg)")
     bars3 = ax.bar(x + width, [recall50[d] for d in db_names], width, label="Recall@50")
+
+    mplcyberpunk.add_bar_gradient(bars=bars1)
+    mplcyberpunk.add_bar_gradient(bars=bars2)
+    mplcyberpunk.add_bar_gradient(bars=bars3)
 
     ax.set_xticks(x)
     ax.set_xticklabels(db_names)
@@ -93,14 +113,19 @@ def plot_grouped_bars(db_names, ingest, qps_list, recall50, out_path: Path):
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
 
+
 def plot_latency_lines(db_names, k_values, latency, out_path: Path):
-    fig = plt.figure(figsize=(10,6))
+    fig = plt.figure(figsize=(10, 6))
     ax = fig.add_subplot(111)
 
+    lines = []
     for db in db_names:
         y = latency[db]
-        ax.plot(k_values, y, marker="o", label=db)
+        (line,) = ax.plot(k_values, y, marker="o", label=db)
+        lines.append(line)
         add_value_labels_points(ax, k_values, y, fmt="{:.4f}")
+
+    mplcyberpunk.make_lines_glow(lines)
 
     ax.set_xticks(k_values)
     ax.set_xlabel("k")
@@ -110,6 +135,7 @@ def plot_latency_lines(db_names, k_values, latency, out_path: Path):
     fig.tight_layout()
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
+
 
 def stack_images_vertically(img_paths, out_path: Path):
     imgs = [Image.open(p).convert("RGB") for p in img_paths]
@@ -121,6 +147,7 @@ def stack_images_vertically(img_paths, out_path: Path):
         canvas.paste(im, (0, y))
         y += im.height
     canvas.save(out_path)
+
 
 def main():
     if len(sys.argv) < 3:
@@ -140,6 +167,7 @@ def main():
     stack_images_vertically([bars_path, latency_path], combined_path)
 
     print(f"Saved:\n- {bars_path}\n- {latency_path}\n- {combined_path}")
+
 
 if __name__ == "__main__":
     main()

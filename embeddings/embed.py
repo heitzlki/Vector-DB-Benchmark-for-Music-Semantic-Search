@@ -5,33 +5,44 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 from dotenv import load_dotenv
+from sentence_transformers import SentenceTransformer
 
 # Choose either sentence-transformers or OpenAI
 USE_OPENAI = False
+
 
 def build_text_row(row: pd.Series) -> str:
     seeds = row.get("seeds", "")
     return f"{row['track']} by {row['artist']}. Genre: {row.get('genre','')}. Tags: {seeds}"
 
-def embed_st(df: pd.DataFrame, model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> np.ndarray:
-    from sentence_transformers import SentenceTransformer
+
+def embed_st(
+    df: pd.DataFrame, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+) -> np.ndarray:
     model = SentenceTransformer(model_name)
     texts = df["text"].tolist()
-    vectors = model.encode(texts, show_progress_bar=True, convert_to_numpy=True, normalize_embeddings=True)
+    vectors = model.encode(
+        texts, show_progress_bar=True, convert_to_numpy=True, normalize_embeddings=True
+    )
     return vectors
 
-def embed_openai(df: pd.DataFrame, model_name: str = "text-embedding-3-large") -> np.ndarray:
+
+def embed_openai(
+    df: pd.DataFrame, model_name: str = "text-embedding-3-large"
+) -> np.ndarray:
     from openai import OpenAI
+
     client = OpenAI()
     vectors = []
     texts = df["text"].tolist()
     batch = 256
     for i in tqdm(range(0, len(texts), batch), desc="OpenAI embeddings"):
-        chunk = texts[i:i+batch]
+        chunk = texts[i : i + batch]
         resp = client.embeddings.create(model=model_name, input=chunk)
         for item in resp.data:
             vectors.append(item.embedding)
     return np.array(vectors, dtype=np.float32)
+
 
 def main():
     load_dotenv()
@@ -60,6 +71,7 @@ def main():
     df_out["embedding"] = list(map(lambda v: v.tolist(), vecs))
     df_out.to_parquet(out_path, index=False)
     print(f"Wrote {len(df_out)} rows to {out_path}")
+
 
 if __name__ == "__main__":
     main()

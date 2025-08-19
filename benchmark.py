@@ -12,6 +12,9 @@ import numpy as np
 from dotenv import load_dotenv
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import mplcyberpunk
+
+plt.style.use("cyberpunk")
 
 from utils.metrics import hits_at_k
 
@@ -338,6 +341,7 @@ def main():
                 continue
             fig, ax = plt.subplots(figsize=(max(6, len(db_labels) * 1.5), 5))
             bars = ax.bar(db_labels, values, color="skyblue")
+            mplcyberpunk.add_bar_gradient(bars=bars)
             ax.set_title(f"{metric_label} (k={k})")
             ax.set_ylabel(metric_label)
             for bar, value in zip(bars, values):
