@@ -1,144 +1,166 @@
 # Vector DB Benchmark for Music Semantic Search
 
-This repo helps you benchmark popular vector databases on the same dataset and queries. The goal is apples to apples comparison for ingest speed and query latency. You can also compute simple relevance scores using tags and genres as weak labels.
+This repository benchmarks multiple vector databases for music semantic search, using a shared dataset and query set. It provides both a CLI benchmarking tool and a web UI for side-by-side DB comparison.
 
-## What you will benchmark
+## Features
 
-- Insert time for the entire dataset
-- Average query latency for top-k search
-- Optional relevance score using a simple heuristic
-
-## Databases supported
-
-- Qdrant (local or cloud)
-- Milvus (local)
-- Weaviate (local or cloud)
-
-## Dataset
-
-Use the Muse Musical Sentiment dataset from Kaggle. Put the CSV in `data/` and name it `muse.csv`.
-Kaggle: https://www.kaggle.com/datasets/cakiki/muse-the-musical-sentiment-dataset
-
-You can start with the included `data/sample_data.csv` for a dry run. Replace it with the full dataset before filming.
-
-## Quick start
-
-1. Create and activate a virtualenv
-2. `pip install -r requirements.txt`
-3. Copy `.env.example` to `.env` and fill API keys or URLs if needed
-4. Start local databases with Docker Compose where relevant
-5. Run embedding script
-6. Run the benchmark
-
-### Docker Compose (local)
-
-```
-docker compose -f scripts/docker-compose.yml up -d
-```
-
-This starts Qdrant, Milvus standalone, and Weaviate with default settings.
-
-### Generate embeddings
-
-By default we use `sentence-transformers` `all-MiniLM-L6-v2` for reproducible local tests. You can switch to OpenAI in `embeddings/embed.py`.
-
-```
-python embeddings/embed.py --csv data/muse.csv --out data/embeddings.parquet
-```
-
-### Run benchmark
-
-Pick which databases to test using flags.
-
-```
-python benchmark.py   --csv data/muse.csv   --embeddings data/embeddings.parquet   --dbs qdrant milvus weaviate   --topk 10   --repetitions 5
-```
-
-Results will be saved in `results/metrics.json` and `results/summary.png`.
-
-#### Optional: Teardown After Benchmark
-
-By default, the benchmark will **not** delete the database or index after running, so you can use the data in the backend or UI. If you want to delete (teardown) the DB/index after benchmarking, use the `--teardown_after_benchmark` flag:
-
-```
-python benchmark.py --csv data/muse.csv --embeddings data/embeddings.parquet --dbs pinecone --teardown_after_benchmark
-```
-
-This is useful if you want to ensure a clean state after benchmarking and do not need to keep the data for further use.
-
-## Heuristic relevance
-
-We do not have human labeled query relevance. For a light touch metric we map natural language queries to expected tags or genres, then measure hit rate in the payload of the top-k results. This is weak supervision and should be presented as such in your video.
-
-## Notes for filming
-
-- Show the same queries across all databases
-- Reset or recreate collections between runs
-- Keep hardware stable
-- Show both ingest time and query latency charts
-- Call out that hosted providers add network latency
-
-## Troubleshooting
-
-- If Docker ports conflict, change them in `scripts/docker-compose.yml`
-- If dimension mismatch errors appear, confirm the embedding model and index vector size
-- If OpenAI is used, set your `OPENAI_API_KEY`
+- **Benchmarks ingest time, query latency, recall, and hit rate** for top-k search
+- **Supports Qdrant, Milvus, Weaviate, Pinecone, and TopK** (local or cloud)
+- **Flexible embedding**: Use `sentence-transformers` (default) or OpenAI embeddings
+- **Heuristic relevance**: Weak label matching using tags/genres for recall/hit metrics
+- **Rich CLI**: Many flags for DB selection, concurrency, top-k sweep, teardown, etc.
+- **Modern UI**: FastAPI backend + static frontend for live DB comparison
+- **Automated result plots**: Generates summary charts and per-k metrics tables
 
 ---
 
-# UI: Music Semantic Search – Triple DB Compare
+## Supported Databases
 
-This project also provides a minimal FastAPI backend and a static frontend to compare semantic search results (and latency) across three vector databases side by side.
+- Qdrant (local/cloud)
+- Milvus (local)
+- Weaviate (local/cloud)
+- Pinecone (local/cloud)
+- TopK (cloud)
 
-## UI Features
+## Dataset
 
-- Side-by-side results for Qdrant, Milvus, and Weaviate
-- Per-database query latency shown in milliseconds
-- Simple, static UI served from the backend at root path
+Use the [Muse Musical Sentiment dataset](https://www.kaggle.com/datasets/cakiki/muse-the-musical-sentiment-dataset) from Kaggle. Place the CSV as `data/muse.csv`.
 
-## UI Quick Start
+You can test with `data/sample_data.csv` for a dry run.
 
-### 1. Environment
+---
 
-- Ensure Python 3.9+ is available.
-- Install dependencies:
-  ```sh
-  pip install fastapi uvicorn python-dotenv sentence-transformers numpy pandas
-  # And whichever DB clients you need in your environment:
-  # pip install qdrant-client pymilvus weaviate-client
-  ```
+## Quick Start
 
-### 2. Configure
+1. **Install dependencies**
 
-- Create a `.env` file in the repo root (same folder as backend/ and frontend/):
-  ```env
-  # DB connection endpoints
-  QDRANT_URL=http://localhost:6333
-  MILVUS_HOST=localhost
-  MILVUS_PORT=19530
-  WEAVIATE_URL=http://localhost:8080
-  # Optional: if you want the API to auto-ingest on startup/first search
-  # This parquet must contain columns: embedding (list[float]), track, artist, genre, seeds, text
-  EMBEDDINGS_PARQUET=./data/embeddings.parquet
-  ```
+```sh
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-### 3. Run
+2. **Configure environment**
 
-- Start the API (serves frontend too):
-  ```sh
-  uvicorn backend.server:app --reload --port 8000
-  ```
-- Open the app: [http://localhost:8000](http://localhost:8000)
+- Copy `.env.example` to `.env` and fill in DB URLs/API keys as needed
 
-#### Notes
+3. **Start local DBs (optional)**
 
-- If `EMBEDDINGS_PARQUET` is set, the server will lazily load and upsert into each selected DB the first time it’s used. Otherwise, it assumes that your databases are already populated and ready for search.
-- The query embedding uses sentence-transformers (`all-MiniLM-L6-v2` by default). The first request will download the model if not cached.
-- The backend expects your DB client wrappers to expose: `setup(dim:int)`, `upsert(vectors: List[List[float]], payloads: List[dict])`, `search(vector: List[float], top_k:int) -> List[{"payload":..., "score":...}]`. This mirrors your benchmark script contract.
+```sh
+docker compose -f scripts/docker-compose.yml up -d
+```
 
-## UI Project Layout
+4. **Generate embeddings**
 
-- `backend/server.py` # FastAPI app, /search endpoint, serves frontend
-- `frontend/index.html` # UI with three result columns and latency per DB
-- `frontend/app.js` # Fetch logic and DOM rendering
-- `frontend/styles.css` # Basic styling
+```sh
+python embeddings/embed.py --csv data/muse.csv --out data/embeddings.parquet
+# For OpenAI: add --use_openai [--model text-embedding-3-large]
+```
+
+5. **Run the benchmark**
+
+```sh
+python benchmark.py --csv data/muse.csv --embeddings data/embeddings.parquet --dbs qdrant milvus weaviate pinecone topk --topk 10 --repetitions 5
+# See all CLI flags with: python benchmark.py --help
+```
+
+6. **View results**
+
+- Summary and per-k plots: `results/`
+- Metrics: `results/metrics.json`
+
+---
+
+## CLI Usage
+
+```sh
+python benchmark.py --csv data/muse.csv --embeddings data/embeddings.parquet --dbs qdrant milvus weaviate pinecone topk --topk 10 --repetitions 5 [--teardown_after_benchmark]
+```
+
+**Key flags:**
+
+- `--dbs`: List of DBs to benchmark (qdrant, milvus, weaviate, pinecone, topk)
+- `--topk`: Top-k for search (default: 10)
+- `--topk_sweep`: List of k values to sweep (e.g. 5 10 50)
+- `--repetitions`: Number of repetitions per query
+- `--concurrency`: Number of concurrent query workers
+- `--teardown_after_benchmark`: Delete DB/index after run
+- `--query_model`: Embedding model for queries
+- `--queries`: Path to YAML file with queries/expected labels
+
+**Results:**
+
+- Plots and tables in `results/` (per-k and summary)
+- All metrics in `results/metrics.json`
+
+---
+
+## Embedding Generation
+
+By default, uses `sentence-transformers/all-MiniLM-L6-v2`. To use OpenAI embeddings:
+
+```sh
+python embeddings/embed.py --csv data/muse.csv --out data/embeddings.parquet --use_openai --model text-embedding-3-large
+```
+
+---
+
+## UI: Music Semantic Search – Multi-DB Compare
+
+The `ui/` folder provides a FastAPI backend and static frontend for live, side-by-side DB search and latency comparison.
+
+### UI Features
+
+- Compare Qdrant, Milvus, Weaviate, Pinecone, and TopK in parallel
+- Per-DB query latency in ms
+- Simple, modern UI (HTML/JS/CSS)
+
+### UI Quick Start
+
+1. **Install dependencies**
+
+```sh
+pip install fastapi uvicorn python-dotenv sentence-transformers numpy pandas qdrant-client pymilvus weaviate-client topk-sdk pinecone openai
+```
+
+2. **Configure**
+
+- Create `.env` in repo root with DB endpoints and API keys
+
+3. **Run the server**
+
+```sh
+uvicorn backend.server:app --reload --port 8000
+```
+
+4. **Open the app**
+
+- Go to [http://localhost:8000](http://localhost:8000)
+
+---
+
+## Project Structure
+
+- `benchmark.py` – Main benchmarking script (CLI)
+- `embeddings/embed.py` – Embedding generation (sentence-transformers or OpenAI)
+- `databases/` – DB client wrappers (Qdrant, Milvus, Weaviate, Pinecone, TopK)
+- `plot_benchmarks.py` – Plots and summary tables
+- `results/` – Output metrics and plots
+- `ui/` – Web UI (FastAPI backend + static frontend)
+- `requirements.txt` – Python dependencies
+
+---
+
+## Troubleshooting
+
+- If Docker ports conflict, edit `scripts/docker-compose.yml`
+- If you see dimension mismatch errors, check embedding model and DB index size
+- For OpenAI, set `OPENAI_API_KEY` in your environment
+- For Pinecone/TopK, set API keys in `.env`
+
+---
+
+## Acknowledgements
+
+- [Muse Musical Sentiment dataset](https://www.kaggle.com/datasets/cakiki/muse-the-musical-sentiment-dataset)
+- [sentence-transformers](https://www.sbert.net/)
+- [Qdrant](https://qdrant.tech/), [Milvus](https://milvus.io/), [Weaviate](https://weaviate.io/), [Pinecone](https://www.pinecone.io/), [TopK](https://topk.io/)
