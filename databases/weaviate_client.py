@@ -101,7 +101,7 @@ class WeaviateDB(VectorDB):
         # crude size estimate per object: vector bytes + ~512B overhead for props
         dim = len(vectors[0]) if vectors else 0
         bytes_per_obj = dim * 4 + 512
-        BATCH = 2000  # standardized batch size
+        BATCH = 200  # standardized batch size
         for start in range(0, len(objs), BATCH):
             chunk = objs[start : start + BATCH]
             self.col.data.insert_many(chunk)
