@@ -29,9 +29,9 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-results/*
-data/*.parquet
-data/muse.csv
+# results/*
+# data/*.parquet
+# data/muse.csv
 .DS_Store
 
 
